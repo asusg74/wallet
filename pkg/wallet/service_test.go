@@ -1,200 +1,144 @@
-package wallet_test
+package wallet
 
 import (
-	"fmt"
-	"reflect"
 	"testing"
-	"github.com/asusg74/wallet/pkg/types"
-	"github.com/asusg74/wallet/pkg/wallet"
+
 	"github.com/google/uuid"
 )
 
-type testService struct {
-	*wallet.Service
-}
-
-type testAccount struct {
-	phone types.Phone
-	balance types.Money
-	payments []struct {
-		amount types.Money
-		category types.PaymentCategory
-	}
-}
-
-var defaultTestAccount = testAccount {
-	phone: "+992935007339",
-	balance: 10_000_00,
-	payments: []struct {
-		amount types.Money
-		category types.PaymentCategory 
-	}{
-		{amount: 1_000_00, category: "auto"},
-	},
-}
-
-func (s *testService) addAccount(data testAccount) (*types.Account, []*types.Payment, error) {
-	account, err := s.RegisterAccount(data.phone)
+func TestReject_positive(t *testing.T) {
+	svg := &Service{}
+	svg.RegisterAccount("+992935007339")
+	svg.Deposit(1, 100)
+	payment, _ := svg.Pay(1, 50, "gayBar")
+	svg.Reject(payment.ID)
+	err := svg.Reject(payment.ID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("can't register account, error = %v", err)
+		t.Errorf("existing payment reject fail: %v", err)
 	}
-
-	err = s.Deposit(account.ID, data.balance)
-	if err != nil {
-		return nil, nil, fmt.Errorf("can't deposity account, error = %v", err)
-	}
-
-	payments := make([]*types.Payment, len(data.payments))
-	for i, payment := range data.payments {
-		payments[i], err = s.Pay(account.ID, payment.amount, payment.category)
-		if err != nil {
-			return nil, nil, fmt.Errorf("can't make payment, error = %v", err)
-		}
-	}
-
-	return account, payments, nil
 }
-
-func newTestService() *testService {
-	return &testService{Service: &wallet.Service{}}
-}
-
-func (s * testService) addAccountWithBalance(phone types.Phone, balance types.Money) (*types.Account, error) {
-	account, err := s.RegisterAccount(phone)
-	if err != nil {
-		return nil, fmt.Errorf("can't register account, error = %v", err)
-	}
-
-	err = s.Deposit(account.ID, balance)
-	if err != nil {
-		return nil, fmt.Errorf("can't deposit account, error = %v", err)
-	}
-
-	return account, nil
-}
-
-func TestService_FindPaymentByID_success(t *testing.T) {
-	s := newTestService()
-	_, payments, err := s.addAccount(defaultTestAccount)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-
-	payment := payments[0]
-	got, err := s.FindPaymentByID(payment.ID)
-	if err != nil {
-		t.Errorf("FindPaymentByID(): error = %v", err)
-		return
-	}
-
-	if !reflect.DeepEqual(payment, got) {
-		t.Errorf("FindPaymentByID(): wrong payment returned = %v", err)
-		return
+func TestReject_negative(t *testing.T) {
+	svg := &Service{}
+	svg.RegisterAccount("+992935007339")
+	svg.Deposit(1, 100)
+	svg.Pay(1, 50, "gayBar")
+	err := svg.Reject("gayClub")
+	if err != ErrPaymentNotFound {
+		t.Errorf("missing payment reject success: %v", err)
 	}
 }
 
-func TestService_FindPaymentByID_fail(t *testing.T) {
-	s := newTestService()
-	_, _, err := s.addAccount(defaultTestAccount)
+func TestRepeat_positive(t *testing.T) {
+	svg := &Service{}
+	svg.RegisterAccount("+992935007339")
+	svg.Deposit(1, 100)
+	payment, _ := svg.Pay(1, 50, "gayBar")
+	_, err := svg.Repeat(payment.ID)
 	if err != nil {
-		t.Error(err)
-		return
+		t.Errorf("Repeat: %v", err)
 	}
+}
 
-	_, err = s.FindPaymentByID(uuid.New().String())
+func TestRepeat_balanceLimit(t *testing.T) {
+	svg := &Service{}
+	svg.RegisterAccount("+992935007339")
+	svg.Deposit(1, 100)
+	payment, _ := svg.Pay(1, 60, "gayBar")
+	_, err := svg.Repeat(payment.ID)
+	if err != ErrNotEnoughBalance {
+		t.Errorf("Repeat: %v", err)
+	}
+}
+
+func TestRepeat_negative(t *testing.T) {
+	svg := &Service{}
+	svg.RegisterAccount("+992935007339")
+	svg.Deposit(1, 100)
+	_, err := svg.Repeat(uuid.New().String())
+	if err != ErrPaymentNotFound {
+		t.Errorf("Repeat: %v", err)
+	}
+}
+
+func TestFavoritePayment_positive(t *testing.T) {
+	svg := &Service{}
+	svg.RegisterAccount("+992935007339")
+	svg.Deposit(1, 100)
+	payment, _ := svg.Pay(1, 60, "gayBar")
+	_, err := svg.FavoritePayment(payment.ID, "smart ass")
+	if err != nil {
+		t.Errorf("Set Favorite: %v", err)
+	}
+}
+
+func TestFavoritePayment_negative(t *testing.T) {
+	svg := &Service{}
+	svg.RegisterAccount("+992935007339")
+	_, err := svg.FavoritePayment(uuid.New().String(), "smart ass")
 	if err == nil {
-		t.Errorf("FindPaymentByID(): error = %v", err)
-		return
-	}
-	
-	if err != wallet.ErrPaymentNotFound {
-		t.Errorf("FindPaymentByID(): must return ErrPaymentNotFound, returned = %v", err)
-		return
+		t.Errorf("Set Favorite: %v", err)
 	}
 }
 
-func TestFindAccountByID_empty(t *testing.T) {
-	svc := &wallet.Service{}
-	result, err := svc.FindAccountByID(1)
-	if err != wallet.ErrAccountNotFound || result != nil {
-		t.Error("Тест empty не прошел")
+func TestPayFromFavorite_positive(t *testing.T) {
+	svg := &Service{}
+	svg.RegisterAccount("+992935007339")
+	svg.Deposit(1, 100)
+	pay, _ := svg.Pay(1, 40, "gayBar")
+	favorite, _ := svg.FavoritePayment(pay.ID, "smart ass")
+	_, err := svg.PayFromFavorite(favorite.ID)
+	if err != nil {
+		t.Errorf("Pay From Favorite: %v", err)
 	}
 }
 
-func TestFindAccountByID_notEmpty(t *testing.T) {
-	svc := &wallet.Service{}
-	result, err := newFunction(svc)
-	result, err = svc.FindAccountByID(3)
-	if err != wallet.ErrAccountNotFound || result != nil {
-		t.Error("Тест notEmpty не прошел")
+func TestPayFromFavorite_wrongPay(t *testing.T) {
+	svg := &Service{}
+	svg.RegisterAccount("+992935007339")
+	svg.Deposit(1, 100)
+	_, err := svg.PayFromFavorite(uuid.New().String())
+	if err == nil {
+		t.Errorf("Pay From Favorite: %v", err)
 	}
 }
 
-func newFunction(svc *wallet.Service) (*types.Account, error) {
-	result, err := svc.RegisterAccount("+992000000001")
-	return result, err
-}
-
-func TestReject_empty(t *testing.T) {
-	svc := &wallet.Service{}
-	err := svc.Reject("1")
-	if err != wallet.ErrPaymentNotFound{
-		t.Error("Тест Reject_empty не прошел")
+func TestPayFromFavorite_balanceLimit(t *testing.T) {
+	svg := &Service{}
+	svg.RegisterAccount("+992935007339")
+	svg.Deposit(1, 100)
+	pay, _ := svg.Pay(1, 60, "gayBar")
+	favorite, _ := svg.FavoritePayment(pay.ID, "smart ass")
+	_, err := svg.PayFromFavorite(favorite.ID)
+	if err == nil {
+		t.Errorf("Pay From Favorite: %v", err)
 	}
 }
 
-func TestService_Reject_success(t *testing.T) {
-	s := newTestService()
-
-	_, payments, err := s.addAccount(defaultTestAccount)
+func TestFileworkAndEtc(t *testing.T) {
+	svg := &Service{}
+	account, _ := svg.RegisterAccount("+992935007339")
+	svg.Deposit(account.ID, 100000)
+	payment1, _ := svg.Pay(account.ID, 60, "smart ass")
+	payment2, _ := svg.Pay(account.ID, 120, "smart anal")
+	payment3, _ := svg.Pay(account.ID, 300, "fisting")
+	svg.FavoritePayment(payment1.ID, "gays1")
+	svg.FavoritePayment(payment2.ID, "gays2")
+	svg.FavoritePayment(payment3.ID, "gays3")
+	err := svg.ExportToFile("gym.txt")
 	if err != nil {
 		t.Error(err)
-		return
 	}
-
-	payment := payments[0]
-	err = s.Reject(payment.ID)
-	if err != nil {
-		t.Errorf("Reject(): error = %v", err)
-		return
-	}
-	
-	savedPayment, err := s.FindPaymentByID(payment.ID)
-	if err != nil {
-		t.Errorf("Reject(): can't find payment by id, error = %v", err)
-		return
-	}
-	if savedPayment.Status != types.PaymentStatusFail {
-		t.Errorf("Reject(): status didn't cnahged, payment = %v", savedPayment)
-		return
-	}
-
-	savedAccount, err := s.FindAccountByID(payment.AccountID)
-	if err != nil {
-		t.Errorf("Reject(): can't find account by id, error = %v", err)
-		return
-	}
-	if savedAccount.Balance != defaultTestAccount.balance {
-		t.Errorf("Reject(): balance didn't changed, account = %v", savedAccount)
-		return
-	}
-	
-}
-
-func TestService_Repeat_success(t *testing.T) {
-	s := newTestService()
-
-	_, payments, err := s.addAccount(defaultTestAccount)
+	err = svg.ImportFromFile("gym.txt")
 	if err != nil {
 		t.Error(err)
-		return
 	}
-
-	payment := payments[0]
-	_, err = s.Repeat(payment.ID)
+	err = svg.Export("")
 	if err != nil {
-		t.Errorf("Reject(): can't repeat, payment = %v", payment)
-		return
+		t.Error(err)
+	}
+	err = svg.Import("")
+	if err != nil {
+		t.Error(err)
 	}
 }
+
